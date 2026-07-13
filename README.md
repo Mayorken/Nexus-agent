@@ -18,4 +18,4 @@ The app uses public OKX market data for the market-regime watchlist. The X Layer
 3. Set `OKX_WEB3_API_KEY`, `OKX_WEB3_SECRET_KEY`, and `OKX_WEB3_PASSPHRASE` there.
 4. Deploy, open the Alpha Radar connector card, and choose **Check connection**.
 
-Do not put these credentials in the frontend or use `VITE_` prefixes. They are used only by the server route to sign an OKX Onchain OS DEX API request.
+Do not put these credentials in the frontend or use `VITE_` prefixes. They are used only by the server route to sign an OKX Onchain OS DEX API V6 request.

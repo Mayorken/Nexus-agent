@@ -12,7 +12,7 @@ export default async function handler(_request, response) {
   }
 
   const timestamp = new Date().toISOString()
-  const requestPath = '/api/v5/dex/aggregator/supported/chain'
+  const requestPath = '/api/v6/dex/aggregator/supported/chain'
   const signature = crypto.createHmac('sha256', secretKey).update(`${timestamp}GET${requestPath}`).digest('base64')
 
   try {
