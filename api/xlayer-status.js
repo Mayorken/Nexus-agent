@@ -25,8 +25,15 @@ export default async function handler(_request, response) {
       }
     })
     const body = await upstream.json()
-    return response.status(upstream.ok ? 200 : 502).json({ configured: true, connected: upstream.ok && body.code === '0' })
+    const connected = upstream.ok && body.code === '0'
+    return response.status(connected ? 200 : 502).json({
+      configured: true,
+      connected,
+      upstreamStatus: upstream.status,
+      upstreamCode: body.code ?? null,
+      upstreamMessage: typeof body.msg === 'string' ? body.msg : 'No message returned'
+    })
   } catch {
-    return response.status(502).json({ configured: true, connected: false })
+    return response.status(502).json({ configured: true, connected: false, upstreamMessage: 'Unable to reach OKX DEX API' })
   }
 }
