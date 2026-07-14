@@ -39,10 +39,12 @@ export default async function handler(_request, response) {
     const signals = (payload.data || []).filter(item => item.token?.tokenAddress && !seen.has(item.token.tokenAddress) && seen.add(item.token.tokenAddress)).slice(0, 6).map((item, index) => {
       const score = scoreSignal(item)
       const concentration = Number(item.token?.top10HolderPercent || 100)
+      const walletLabels = { '1': 'Smart-money', '2': 'Influencer', '3': 'Whale', SMART_MONEY: 'Smart-money', INFLUENCER: 'Influencer', WHALE: 'Whale' }
+      const walletLabel = walletLabels[item.walletType] || 'Tracked-wallet'
       return {
         symbol: item.token.symbol || 'UNKNOWN', name: item.token.name || 'Unknown token', instId: `${item.token.symbol || 'TOKEN'} · X Layer`, tokenAddress: item.token.tokenAddress,
         price: Number(item.price || 0), score, risk: concentration <= 45 ? 'Medium' : 'High', liquidity: `$${formatUsd(item.amountUsd)} flow`, catalyst: `${item.triggerWalletCount || 0} tracked wallets`,
-        thesis: `${item.walletType || 'Tracked'} wallets triggered a recent buy signal. ${item.token.holders || 0} holders; top-10 concentration ${concentration.toFixed(1)}%.`, color: colors[index % colors.length], onchain: true,
+        thesis: `${walletLabel} activity triggered a recent buy signal across ${item.triggerWalletCount || 0} wallet(s). ${item.token.holders || 0} holders; top-10 concentration ${concentration.toFixed(1)}%.`, color: colors[index % colors.length], onchain: true,
         timestamp: item.timestamp
       }
     })
