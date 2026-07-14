@@ -27,13 +27,13 @@ export default async function handler(_request, response) {
 
   const timestamp = new Date().toISOString()
   const requestPath = '/api/v6/dex/market/signal/list'
-  const body = JSON.stringify([{ chainIndex: '196', walletType: '1,2,3', minAmountUsd: '1000', minAddressCount: '1', minLiquidityUsd: '500', limit: '12' }])
+  const body = JSON.stringify([{ chainIndex: '196', limit: '12' }])
   const signature = crypto.createHmac('sha256', secretKey).update(`${timestamp}POST${requestPath}${body}`).digest('base64')
 
   try {
     const upstream = await fetch(`https://web3.okx.com${requestPath}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'OK-ACCESS-KEY': apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-PASSPHRASE': passphrase, 'OK-ACCESS-TIMESTAMP': timestamp }, body })
     const payload = await upstream.json()
-    if (!upstream.ok || payload.code !== '0') return response.status(502).json({ message: payload.msg || 'Unable to load X Layer signals', upstreamCode: payload.code ?? null })
+    if (!upstream.ok || payload.code !== '0') return response.status(502).json({ message: payload.msg || 'Unable to load X Layer signals', upstreamCode: payload.code ?? null, upstreamStatus: upstream.status })
 
     const seen = new Set()
     const signals = (payload.data || []).filter(item => item.token?.tokenAddress && !seen.has(item.token.tokenAddress) && seen.add(item.token.tokenAddress)).slice(0, 6).map((item, index) => {
