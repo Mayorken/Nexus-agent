@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Activity, AlertTriangle, ArrowRight, BarChart3, Bell, Bolt, Bot, Check, ChevronRight, CircleDollarSign, Compass, Copy, Download, ExternalLink, Layers3, LayoutDashboard, LockKeyhole, Megaphone, Menu, Palette, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, WalletCards, X } from 'lucide-react'
+import { nexusLaunchTokenBytecode } from './contracts/nexusLaunchToken'
 import './styles.css'
 
 type View = 'radar' | 'desk' | 'launch' | 'activity'
@@ -14,6 +15,7 @@ type WatchItem = { tokenAddress: string; symbol: string; name: string; color: st
 type TradeRecord = { id: string; kind: 'demo' | 'approval' | 'swap'; symbol: string; amount: number; createdAt: string; transactionHash?: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
 type LaunchPlan = { id: string; name: string; symbol: string; identity: string; community: string; signature: string; goal: string; style: string; supply: string; liquidity: number; creatorAllocation: number; readiness: number; createdAt: string }
 type AlphaBrief = { id: string; symbol: string; name: string; tokenAddress?: string; price: number; change: number; stance: TokenAnalysis['stance']; summary: string; catalysts: string[]; risks: string[]; nextStep: string; safetyStatus: string; savedAt: string }
+type TestnetDeployment = { transactionHash: string; contractAddress?: string; status: 'pending' | 'confirmed' | 'failed' }
 type Eip1193Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
 type WalletTransaction = { to: string; data: string; gas?: string; gasPrice?: string; maxPriorityFeePerGas?: string; value?: string }
 type SwapHandoff = { chainId: string; expiresNote: string; approval: WalletTransaction; swap: WalletTransaction; summary: { inputAmountUsd: number; outputSymbol: string; outputRaw: string; minReceiveRaw: string; routeCount: number; slippagePercent: string; feePercent: string; feeAmountUsd: number; feeRecipient: string }; message?: string }
@@ -21,6 +23,18 @@ type SwapHandoff = { chainId: string; expiresNote: string; approval: WalletTrans
 declare global { interface Window { ethereum?: Eip1193Provider } }
 
 const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`
+const encodeUint256 = (value: bigint) => value.toString(16).padStart(64, '0')
+const encodeString = (value: string) => {
+  const bytes = Array.from(new TextEncoder().encode(value)).map(byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${encodeUint256(BigInt(bytes.length / 2))}${bytes.padEnd(Math.ceil(bytes.length / 64) * 64, '0')}`
+}
+const encodeTokenConstructor = (name: string, symbol: string, wholeSupply: bigint) => {
+  const encodedName = encodeString(name)
+  const encodedSymbol = encodeString(symbol)
+  const nameOffset = 96
+  const symbolOffset = nameOffset + encodedName.length / 2
+  return `${encodeUint256(BigInt(nameOffset))}${encodeUint256(BigInt(symbolOffset))}${encodeUint256(wholeSupply)}${encodedName}${encodedSymbol}`
+}
 
 const signals: Signal[] = [
   { symbol: 'BTC', name: 'Bitcoin', instId: 'BTC-USDT', score: 86, risk: 'Low', liquidity: 'Deep', catalyst: 'Spot momentum', thesis: 'The liquid market benchmark. Use it to set risk appetite before allocating to smaller on-chain opportunities.', color: '#f4a340' },
@@ -148,7 +162,7 @@ function App() {
       <header><button className="menu-button" onClick={() => setMenu(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{view === 'radar' ? 'Alpha radar' : view === 'desk' ? 'Trade desk' : view === 'launch' ? 'Launch lab' : view === 'activity' ? 'Activity' : 'Pricing'}</b></div><div className="header-right"><span className="demo-badge"><ShieldCheck size={14}/> Demo mode</span><button className="refresh" disabled={walletBusy} onClick={() => void connectWallet()}><WalletCards size={15}/>{walletBusy ? 'Connecting…' : walletAddress ? shortAddress(walletAddress) : 'Connect wallet'}</button><button className="refresh" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? 'spinning' : ''} size={15}/> Refresh</button></div></header>
       {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} signals={radarSignals} tickers={tickers} loading={loading} scanning={scanning} scan={() => void scanXLayer()} onConnect={() => setConnectorOpen(true)} watchlist={watchlist} toggleWatch={toggleWatch} browserAlerts={browserAlerts} enableBrowserAlerts={() => void enableBrowserAlerts()} />}
       {view === 'desk' && <Desk selected={selected} price={price} change={change} amount={amount} setAmount={setAmount} units={units} ticker={currentTicker} status={tradeStatus} setStatus={setTradeStatus} notify={notify} onRecord={recordActivity} walletAddress={walletAddress} connectWallet={connectWallet} />}
-      {view === 'launch' && <LaunchLab notify={notify} />}
+      {view === 'launch' && <><LaunchLab notify={notify} walletAddress={walletAddress} connectWallet={connectWallet} /><TestnetDeploy notify={notify} walletAddress={walletAddress} connectWallet={connectWallet} /></>}
       {view === 'activity' && <ActivityView records={activityRecords} />}
     </main>
     {connectorOpen && <ConnectorSetup state={connectorState} close={() => setConnectorOpen(false)} check={() => void checkConnector()} />}
@@ -314,7 +328,7 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
   </section>
 }
 
-function LaunchLab({ notify }: { notify: (value: string) => void }) {
+function LaunchLab({ notify, walletAddress, connectWallet }: { notify: (value: string) => void; walletAddress: string; connectWallet: () => Promise<void> }) {
   const [name, setName] = useState('Moon Scout')
   const [symbol, setSymbol] = useState('SCOUT')
   const [supply, setSupply] = useState('1000000000')
@@ -327,9 +341,16 @@ function LaunchLab({ notify }: { notify: (value: string) => void }) {
   const [visualStyle, setVisualStyle] = useState<'Signal core' | 'Street poster' | 'Clean protocol' | 'Retro arcade'>('Signal core')
   const [planned, setPlanned] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [deployerAddress, setDeployerAddress] = useState('')
+  const [deploying, setDeploying] = useState(false)
+  const [deployment, setDeployment] = useState<TestnetDeployment | null>(null)
+  const [studioDeployError, setStudioDeployError] = useState('')
   const [savedPlans, setSavedPlans] = useState<LaunchPlan[]>(() => {
     try { return JSON.parse(window.localStorage.getItem('nexus-launch-plans') || '[]') as LaunchPlan[] } catch { return [] }
   })
+  const [deployStatus, setDeployStatus] = useState<'idle' | 'switching' | 'submitting' | 'submitted' | 'error'>('idle')
+  const [deployHash, setDeployHash] = useState('')
+  const [deployError, setDeployError] = useState('')
   const liquidityUsd = Math.max(0, Number(liquidity || 0))
   const creatorPercent = Math.max(0, Number(creatorAllocation || 0))
   const score = Math.max(22, Math.min(95, Math.round(48 + Math.min(30, liquidityUsd / 250) - Math.max(0, creatorPercent - 10) * 1.7)))
@@ -367,14 +388,91 @@ function LaunchLab({ notify }: { notify: (value: string) => void }) {
       const nextPlans = [plan, ...existing].slice(0, 12)
       window.localStorage.setItem('nexus-launch-plans', JSON.stringify(nextPlans))
       setSavedPlans(nextPlans)
-      setSaved(true); notify('Launch plan saved in this browser')
+      setSaved(true); window.dispatchEvent(new Event('nexus-launch-plan-saved')); notify('Launch plan saved in this browser')
     } catch { notify('This browser could not save the launch plan') }
   }
   const openSavedPlan = (plan: LaunchPlan) => {
     setName(plan.name); setSymbol(plan.symbol); setIdentity(plan.identity); setCommunity(plan.community); setSignature(plan.signature); setLaunchGoal(plan.goal); setVisualStyle(plan.style as typeof visualStyle); setSupply(plan.supply); setLiquidity(String(plan.liquidity)); setCreatorAllocation(String(plan.creatorAllocation)); setPlanned(true); setSaved(true); notify(`${plan.name} launch plan restored`)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+  const deployOnTestnet = async () => {
+    if (!window.ethereum) { notify('Install or open an EVM wallet such as OKX Wallet to deploy on testnet'); return }
+    if (!walletAddress) { await connectWallet(); return }
+    setDeployStatus('switching'); setStudioDeployError(''); setDeployHash('')
+    try {
+      try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x7A0' }] }) }
+      catch (error) {
+        if (!(error && typeof error === 'object' && 'code' in error && error.code === 4902)) throw error
+        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x7A0', chainName: 'X Layer Testnet', nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 }, rpcUrls: ['https://testrpc.xlayer.tech/terigon'], blockExplorerUrls: ['https://www.okx.com/web3/explorer/xlayer-test'] }] })
+      }
+      const data = `${nexusLaunchTokenBytecode}${encodeTokenConstructor(displayName, displaySymbol, BigInt(supply))}`
+      setDeployStatus('submitting')
+      const hash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, data, value: '0x0' }] }) as string
+      setDeployHash(hash); setDeployStatus('submitted'); notify('Testnet token deployment submitted')
+    } catch (error) { setDeployStatus('error'); setStudioDeployError(error instanceof Error ? error.message : 'Wallet deployment was cancelled') }
+  }
+  const waitForTestnetDeployment = async (transactionHash: string) => {
+    if (!window.ethereum) return
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 2500))
+      const receipt = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [transactionHash] }) as { status?: string; contractAddress?: string | null } | null
+      if (!receipt) continue
+      if (receipt.status === '0x1' && receipt.contractAddress) { setDeployment({ transactionHash, contractAddress: receipt.contractAddress, status: 'confirmed' }); notify('Testnet token deployed. Contract address is ready.'); return }
+      setDeployment({ transactionHash, status: 'failed' }); setDeployError('The testnet deployment did not succeed. No token was created.'); return
+    }
+    setDeployError('Deployment is still pending. Check your wallet or the X Layer test explorer.')
+  }
+  const deployToTestnet = async () => {
+    if (!window.ethereum) { notify('Open an EVM wallet such as OKX Wallet to deploy on testnet'); return }
+    const wholeSupply = BigInt(supply || '0')
+    if (!name.trim() || !symbol.trim() || wholeSupply < 1n) { setDeployError('Add a token name, ticker, and whole-number supply before deployment.'); return }
+    setDeploying(true); setDeployError(''); setDeployment(null)
+    try {
+      try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x7a0' }] }) }
+      catch (error) {
+        if (!(error && typeof error === 'object' && 'code' in error && error.code === 4902)) throw error
+        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x7a0', chainName: 'X Layer Testnet', nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 }, rpcUrls: ['https://testrpc.xlayer.tech/terigon'], blockExplorerUrls: ['https://www.okx.com/web3/explorer/xlayer-test'] }] })
+      }
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' }) as string[]
+      if (!accounts[0]) throw new Error('No wallet account was selected')
+      setDeployerAddress(accounts[0])
+      const data = `${nexusLaunchTokenBytecode}${encodeTokenConstructor(name.trim(), symbol.trim(), wholeSupply)}`
+      const transactionHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ from: accounts[0], data }] }) as string
+      setDeployment({ transactionHash, status: 'pending' }); notify('Testnet deployment submitted. Waiting for confirmation.'); void waitForTestnetDeployment(transactionHash)
+    } catch (error) { setDeployError(error instanceof Error ? error.message : 'Testnet deployment was cancelled') }
+    finally { setDeploying(false) }
+  }
   return <section className="alpha-content launch-content"><div className="desk-heading"><div><p className="overline">NEXUS LAUNCH STUDIO</p><h1>Build the identity.<br/><em>Then the launch.</em></h1><p>Start with what the token stands for and who it is for. Nexus turns that into a clear visual direction and launch brief before you put anything on-chain.</p></div><span className="guardrail"><ShieldCheck size={16}/> Planning · branding · no deployment</span></div><div className="launch-grid"><div className="launch-form"><p className="panel-label"><Sparkles size={15}/> TOKEN IDENTITY</p><div className="launch-inputs"><label>Token name<input value={name} maxLength={32} onChange={event => setName(event.target.value)}/></label><label>Ticker<input value={symbol} maxLength={10} onChange={event => setSymbol(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}/></label><label className="launch-wide">What is this token about?<textarea value={identity} maxLength={220} onChange={event => setIdentity(event.target.value)} placeholder="The role, story, or belief that makes it worth following."/></label><label>Community name<input value={community} maxLength={40} onChange={event => setCommunity(event.target.value)} placeholder="e.g. Signal Scouts"/></label><label>Signature mark<input value={signature} maxLength={4} onChange={event => setSignature(event.target.value)} placeholder="e.g. ◉"/></label><label className="launch-wide">Launch goal<textarea value={launchGoal} maxLength={220} onChange={event => setLaunchGoal(event.target.value)} placeholder="What should the community rally around?"/></label><label>Visual style<select value={visualStyle} onChange={event => setVisualStyle(event.target.value as typeof visualStyle)}>{['Signal core', 'Street poster', 'Clean protocol', 'Retro arcade'].map(style => <option key={style}>{style}</option>)}</select></label><label>Fixed supply<input type="number" min="1" value={supply} onChange={event => setSupply(event.target.value)}/></label><label>Initial liquidity (USDT)<input type="number" min="0" value={liquidity} onChange={event => setLiquidity(event.target.value)}/></label><label>Creator allocation (%)<input type="number" min="0" max="100" value={creatorAllocation} onChange={event => setCreatorAllocation(event.target.value)}/></label></div><div className="launch-prompt"><Sparkles size={16}/><span><b>Brand direction:</b> {styleKit.line}</span></div><button className="build-plan" onClick={launchPlan}><Sparkles size={17}/> Create token identity kit</button><small>Nexus creates planning and branding concepts. It does not deploy a token, create liquidity, collect funds, or promise performance.</small></div><div className="launch-report"><div className="launch-token"><span className="token-mark" style={{background:`linear-gradient(135deg, ${styleKit.palette[0]}, ${styleKit.palette[1]})`}}>{signature || initials[0]}</span><div><p className="panel-label">X LAYER TOKEN PLAN</p><h2>{displayName} <small>${displaySymbol}</small></h2></div><span className={risk === 'Lower' ? 'launch-risk good' : 'launch-risk'}>{risk} risk</span></div><div className="identity-preview"><span>{signature || '◉'}</span><div><small>COMMUNITY IDENTITY</small><b>{community || 'Your community'}</b><p>{identity || 'Define what this token stands for.'}</p></div></div><div className="launch-score"><div><span>Launch readiness</span><b>{score}<small>/100</small></b></div><i><em style={{width:`${score}%`}}/></i><p>A simple score based on liquidity and creator allocation. Not financial advice.</p></div><div className="launch-metrics"><span><small>Liquidity budget</small><b>{money(liquidityUsd)}</b></span><span><small>Planning valuation band</small><b>{money(valuationModel)}</b></span><span><small>Creator allocation</small><b>{creatorPercent.toFixed(0)}%</b></span></div><div className="risk-checks"><p className="panel-label"><AlertTriangle size={15}/> RISK CHECKS</p><span className={liquidityUsd >= 5000 ? 'pass' : 'warn'}>{liquidityUsd >= 5000 ? <Check size={14}/> : <AlertTriangle size={14}/>} {liquidityUsd >= 5000 ? 'Initial liquidity meets the $5,000 planning threshold.' : 'Consider deeper starting liquidity before any public launch.'}</span><span className={creatorPercent <= 15 ? 'pass' : 'warn'}>{creatorPercent <= 15 ? <Check size={14}/> : <AlertTriangle size={14}/>} {creatorPercent <= 15 ? 'Creator allocation is within the 15% planning guardrail.' : 'Creator allocation is above the 15% planning guardrail.'}</span><span className="warn"><AlertTriangle size={14}/> Publish clear risk disclosures and obtain legal advice before any public token issuance.</span></div></div></div>{planned && <section className="studio-output"><div className="studio-heading"><div><p className="overline">GENERATED TOKEN IDENTITY KIT</p><h2>{displayName} brand kit</h2></div><div className="studio-actions"><button onClick={() => void copyLaunchPost()}><Megaphone size={14}/> Copy launch post</button><button onClick={() => void copyBrief()}><Copy size={14}/> Copy brief</button></div></div><div className="studio-grid"><article className="brand-card"><div className="logo-concept" style={{background:`radial-gradient(circle at 30% 20%, ${styleKit.palette[2]}, transparent 34%), linear-gradient(135deg, ${styleKit.palette[0]}, ${styleKit.palette[1]})`}}><span>{initials}</span><i/><i/><i/></div><p className="panel-label"><Palette size={14}/> LOGO CONCEPT</p><h3>{visualStyle}</h3><p>Use this mark as a starting direction for the token avatar, social headers, and launch graphics. Palette: {styleKit.palette.join(' · ')}.</p><button className="logo-download" onClick={downloadLogo}><Download size={13}/> Download logo SVG</button></article><article className="brand-card"><p className="panel-label"><Megaphone size={14}/> IDENTITY & VOICE</p><h3>{styleKit.angle}</h3><p><b>{community || 'Your community'}</b> · {styleKit.voice}</p><div className="message-chip">“{signature || '◉'} {displayName}: {styleKit.angle.toLowerCase()}.”</div></article><article className="brand-card"><p className="panel-label"><Rocket size={14}/> ROLLOUT CHECKLIST</p><ol className="rollout-list"><li>Publish the token story, allocation, and risks.</li><li>Set a visible liquidity and wallet-policy plan.</li><li>Release the logo, avatar, and first community post.</li><li>Move to Markets after launch to monitor real flows.</li></ol></article></div><div className="launch-review"><div><p className="panel-label"><ShieldCheck size={15}/> LAUNCH REVIEW</p><h3>Review the important details before any public action.</h3><p>This saves a planning record only. It does not create a token or make a transaction.</p></div><div className="review-checks"><span className={identity.trim() && community.trim() ? 'pass' : 'warn'}>{identity.trim() && community.trim() ? <Check size={14}/> : <AlertTriangle size={14}/>} Identity and community are defined</span><span className={liquidityUsd >= 5000 ? 'pass' : 'warn'}>{liquidityUsd >= 5000 ? <Check size={14}/> : <AlertTriangle size={14}/>} Liquidity plan reviewed</span><span className={creatorPercent <= 15 ? 'pass' : 'warn'}>{creatorPercent <= 15 ? <Check size={14}/> : <AlertTriangle size={14}/>} Creator allocation reviewed</span></div><button className={saved ? 'saved-plan' : 'save-plan'} disabled={saved} onClick={saveLaunchPlan}>{saved ? <><Check size={16}/> Launch plan saved</> : <><ShieldCheck size={16}/> Save launch plan</>}</button></div></section>}{savedPlans.length > 0 && <section className="saved-launches"><div className="section-title"><div><p className="overline">SAVED LAUNCHES</p><h2>Continue a token project.</h2></div><span>Stored only in this browser.</span></div><div className="saved-launch-grid">{savedPlans.map(plan => <button className="saved-launch-card" key={plan.id} onClick={() => openSavedPlan(plan)}><span style={{background:`linear-gradient(135deg,#6d92ff,#856dff)`}}>{plan.signature || plan.symbol[0]}</span><div><b>{plan.name} <small>${plan.symbol}</small></b><p>{plan.community || 'Community not named'} · {plan.readiness}/100 readiness</p><em>Open plan <ArrowRight size={12}/></em></div></button>)}</div></section>}</section>
+}
+
+function TestnetDeploy({ notify, walletAddress, connectWallet }: { notify: (value: string) => void; walletAddress: string; connectWallet: () => Promise<void> }) {
+  const [plan, setPlan] = useState<LaunchPlan | null>(null)
+  const [status, setStatus] = useState<'idle' | 'switching' | 'submitting' | 'submitted' | 'error'>('idle')
+  const [hash, setHash] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const sync = () => { try { const saved = JSON.parse(window.localStorage.getItem('nexus-launch-plans') || '[]') as LaunchPlan[]; setPlan(saved[0] || null) } catch { setPlan(null) } }
+    sync(); window.addEventListener('nexus-launch-plan-saved', sync); return () => window.removeEventListener('nexus-launch-plan-saved', sync)
+  }, [])
+  const deploy = async () => {
+    if (!plan) { notify('Save a launch plan first'); return }
+    if (!window.ethereum) { notify('Install or open an EVM wallet such as OKX Wallet to deploy on testnet'); return }
+    if (!walletAddress) { await connectWallet(); return }
+    if (BigInt(plan.supply) > 1000000000000n) { setStatus('error'); setError('Testnet supply is capped at 1,000,000,000,000 whole tokens.'); return }
+    setStatus('switching'); setError(''); setHash('')
+    try {
+      try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x7A0' }] }) }
+      catch (switchError) {
+        if (!(switchError && typeof switchError === 'object' && 'code' in switchError && switchError.code === 4902)) throw switchError
+        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x7A0', chainName: 'X Layer Testnet', nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 }, rpcUrls: ['https://testrpc.xlayer.tech/terigon'], blockExplorerUrls: ['https://www.okx.com/web3/explorer/xlayer-test'] }] })
+      }
+      const data = `${nexusLaunchTokenBytecode}${encodeTokenConstructor(plan.name, plan.symbol, BigInt(plan.supply))}`
+      setStatus('submitting')
+      const txHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [{ from: walletAddress, data, value: '0x0' }] }) as string
+      setHash(txHash); setStatus('submitted'); notify('Testnet token deployment submitted')
+    } catch (deployError) { setStatus('error'); setError(deployError instanceof Error ? deployError.message : 'Wallet deployment was cancelled') }
+  }
+  return <section className="alpha-content deploy-content"><div className="testnet-deploy"><div><p className="panel-label"><Rocket size={15}/> OPTIONAL TESTNET DEPLOY</p><h2>Put your saved plan on X Layer Testnet.</h2><p>Deploys a simple ERC-20 from your wallet after approval. This flow cannot use mainnet.</p>{plan ? <span className="deploy-plan-chip">{plan.name} (${plan.symbol}) · {plan.supply} supply</span> : <span className="deploy-plan-chip muted">Save a Launch Studio plan to unlock deployment.</span>}</div>{status === 'submitted' ? <div className="deploy-success"><Check size={16}/><span><b>Deployment submitted</b><a href={'https://www.okx.com/web3/explorer/xlayer-test/tx/' + hash} target="_blank" rel="noreferrer">View testnet transaction <ExternalLink size={12}/></a></span></div> : <button className="deploy-testnet" disabled={!plan || status === 'switching' || status === 'submitting'} onClick={() => void deploy()}>{status === 'switching' ? 'Switching network…' : status === 'submitting' ? 'Waiting for wallet…' : walletAddress ? 'Deploy on testnet' : 'Connect wallet to deploy'} <ArrowRight size={14}/></button>}{status === 'error' && <div className="deploy-error"><AlertTriangle size={14}/>{error}</div>}</div></section>
 }
 
 function ActivityView({ records }: { records: TradeRecord[] }) {
