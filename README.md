@@ -19,3 +19,9 @@ The app uses public OKX market data for the market-regime watchlist. The X Layer
 4. Deploy, open the Alpha Radar connector card, and choose **Check connection**.
 
 Do not put these credentials in the frontend or use `VITE_` prefixes. They are used only by the server route to sign an OKX Onchain OS DEX API V6 request.
+
+## Live wallet handoff
+
+Nexus does not custody wallets or private keys. For an X Layer signal, a user can connect an EVM wallet, review a live quote, and prepare a transaction handoff. The backend creates the exact-amount USDT approval and swap calldata with the OKX DEX API; the wallet presents and signs each transaction separately.
+
+The swap control stays disabled until the approval is confirmed on X Layer. A prepared transaction can become stale as markets move, so users should re-prepare it before signing if they wait.
