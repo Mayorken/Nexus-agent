@@ -99,15 +99,15 @@ function App() {
   const price = currentTicker ? Number(currentTicker.last) : selected.price ?? (selected.symbol === 'BTC' ? 68429 : selected.symbol === 'ETH' ? 3612 : 174.86)
   const change = currentTicker ? ((price - Number(currentTicker.open24h)) / Number(currentTicker.open24h)) * 100 : 0
   const units = Number(amount || 0) / price
-  const nav = [[ 'radar', Compass, 'Alpha radar' ], [ 'desk', WalletCards, 'Trade desk' ], [ 'launch', Rocket, 'Launch lab' ], [ 'activity', Activity, 'Activity' ]] as const
+  const nav = [[ 'radar', Compass, 'Markets' ], [ 'desk', WalletCards, 'Trade' ], [ 'launch', Rocket, 'Launch' ], [ 'activity', Activity, 'Activity' ]] as const
 
   return <div className="alpha-app">
     <aside className={menu ? 'alpha-sidebar open' : 'alpha-sidebar'}>
-      <div className="alpha-brand"><span><Bolt size={17}/></span> NEXUS <i>ALPHA</i><button onClick={() => setMenu(false)}><X size={18}/></button></div>
-      <div className="workspace-pill"><span>●</span> DEMO WORKSPACE</div>
+      <div className="alpha-brand"><span><Bolt size={17}/></span> NEXUS <i>ONCHAIN</i><button onClick={() => setMenu(false)}><X size={18}/></button></div>
+      <div className="workspace-pill"><span>●</span> X LAYER · PREVIEW</div>
       <nav>{nav.map(([id, Icon, label]) => <button key={id} className={view === id ? 'active' : ''} onClick={() => { setView(id); setMenu(false) }}><Icon size={17}/>{label}</button>)}</nav>
-      <div className="sidebar-callout"><ShieldCheck size={19}/><b>Execution you control</b><p>Every order is reviewed before it is simulated. No live funds or keys are used.</p></div>
-      <div className="profile-row"><div>OA</div><span><b>Alpha operator</b><small>Demo account</small></span><ChevronRight size={15}/></div>
+      <div className="sidebar-callout"><ShieldCheck size={19}/><b>Operator-controlled execution</b><p>Quotes, wallet requests and every decision stay visible before you sign.</p></div>
+      <div className="profile-row"><div>NX</div><span><b>Nexus workspace</b><small>Research environment</small></span><ChevronRight size={15}/></div>
     </aside>
     <main className="alpha-main">
       <header><button className="menu-button" onClick={() => setMenu(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{view === 'radar' ? 'Alpha radar' : view === 'desk' ? 'Trade desk' : view === 'launch' ? 'Launch lab' : view === 'activity' ? 'Activity' : 'Pricing'}</b></div><div className="header-right"><span className="demo-badge"><ShieldCheck size={14}/> Demo mode</span><button className="refresh" disabled={walletBusy} onClick={() => void connectWallet()}><WalletCards size={15}/>{walletBusy ? 'Connecting…' : walletAddress ? shortAddress(walletAddress) : 'Connect wallet'}</button><button className="refresh" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? 'spinning' : ''} size={15}/> Refresh</button></div></header>
