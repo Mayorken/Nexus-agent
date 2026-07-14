@@ -6,6 +6,7 @@ import './styles.css'
 type View = 'radar' | 'desk' | 'activity' | 'pricing'
 type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium' | 'High'; score: number; liquidity: string; catalyst: string; color: string; price?: number; tokenAddress?: string; onchain?: boolean }
 type Ticker = { last: string; open24h: string; high24h: string; low24h: string; volCcy24h: string; ts: string }
+type QuoteResult = { inputAmountUsd: number; outputAmount: number; outputSymbol: string; estimatedGasFee: string | null; routeCount: number; quotedAt: string; message?: string }
 
 const signals: Signal[] = [
   { symbol: 'BTC', name: 'Bitcoin', instId: 'BTC-USDT', score: 86, risk: 'Low', liquidity: 'Deep', catalyst: 'Spot momentum', thesis: 'The liquid market benchmark. Use it to set risk appetite before allocating to smaller on-chain opportunities.', color: '#f4a340' },
@@ -107,11 +108,26 @@ function SignalCard({ signal, ticker, selected, onSelect }: { signal: Signal; ti
 
 function Desk({ selected, price, change, amount, setAmount, units, ticker, status, setStatus, notify }: { selected: Signal; price: number; change: number; amount: string; setAmount: (value: string) => void; units: number; ticker?: Ticker; status: 'idle' | 'preview' | 'complete'; setStatus: (value: 'idle' | 'preview' | 'complete') => void; notify: (value: string) => void }) {
   const [prompt, setPrompt] = useState('Allocate $100 to the selected market candidate')
+  const [quote, setQuote] = useState<QuoteResult | null>(null)
+  const [quoting, setQuoting] = useState(false)
+  const [quoteError, setQuoteError] = useState('')
   const estimatedFee = Math.max(Number(amount || 0) * 0.001, 0.1)
-  const simulate = () => { setStatus('complete'); notify('Demo order completed — no funds were moved') }
+  const getQuote = async () => {
+    if (!selected.tokenAddress) return
+    setQuoting(true); setQuoteError(''); setQuote(null)
+    try {
+      const response = await fetch(`/api/xlayer-quote?tokenAddress=${encodeURIComponent(selected.tokenAddress)}&amount=${encodeURIComponent(amount)}`)
+      const data = await response.json() as QuoteResult
+      if (!response.ok) throw new Error(data.message || 'Quote unavailable')
+      setQuote(data)
+    } catch (error) { setQuoteError(error instanceof Error ? error.message : 'Quote unavailable') }
+    finally { setQuoting(false) }
+  }
+  const simulate = () => { if (selected.onchain && !quote) { notify('Review a live quote before simulating this trade'); return }; setStatus('complete'); notify('Demo order completed — no funds were moved') }
   return <section className="alpha-content desk-content"><div className="desk-heading"><div><p className="overline">NEXUS ALPHA DESK / REVIEW</p><h1>Trade plan, <em>not blind execution.</em></h1><p>Turn your instruction into a readable order. You retain the final decision.</p></div><span className="guardrail"><LockKeyhole size={16}/> No wallet connected</span></div>
     <div className="desk-grid"><div className="command-panel"><p className="panel-label"><Bot size={15}/> NATURAL-LANGUAGE COMMAND</p><textarea value={prompt} onChange={event => setPrompt(event.target.value)}/><div className="prompt-suggestions"><button onClick={() => setPrompt('Allocate $100 to the selected market candidate')}>Use $100</button><button onClick={() => setPrompt('Build a small demo position with a strict risk review')}>Strict risk review</button></div><button className="build-plan" onClick={() => { setStatus('preview'); notify('Trade plan updated') }}><Sparkles size={17}/> Build trade plan</button><div className="why"><b>Why {selected.symbol} is surfaced</b><p>{selected.thesis}</p></div></div>
       <div className="order-panel"><div className="order-heading"><div><p className="panel-label">EXECUTION PREVIEW</p><h2>Buy {selected.symbol}</h2></div><span className="demo-badge">SIMULATED</span></div><div className="market-row"><span className="token-mark" style={{background:selected.color}}>{selected.symbol[0]}</span><div><b>{selected.instId}</b><small>{money(price)} · <em className={change >= 0 ? 'positive' : 'negative'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}% / 24h</em></small></div><BarChart3 size={19}/></div><label className="amount-field">Amount to allocate <div><span>$</span><input type="number" min="1" max="10000" value={amount} onChange={event => setAmount(event.target.value)}/><b>USDT</b></div></label><div className="order-lines"><span>Estimated quantity <b>{units.toFixed(selected.symbol === 'BTC' ? 6 : 4)} {selected.symbol}</b></span><span>Reference price <b>{money(price)}</b></span><span>Estimated fee <b>{money(estimatedFee)}</b></span>{ticker && <span>24h range <b>{money(Number(ticker.low24h))} – {money(Number(ticker.high24h))}</b></span>}</div><div className="review-warning"><AlertTriangle size={17}/><span><b>Review before confirming.</b> Market price, spread, liquidity and volatility can change before any real trade.</span></div>{status === 'complete' ? <div className="complete-state"><Check size={18}/><span><b>Demo order recorded</b><small>Simulated {money(Number(amount || 0))} buy of {selected.symbol}. No funds moved.</small></span></div> : <button className="simulate-button" onClick={simulate}><ShieldCheck size={17}/> Confirm demo trade</button>}<small className="confirm-note">This prototype does not connect wallets, hold API keys, or submit live orders.</small></div></div>
+    {selected.onchain && <div className="quote-review"><div><p className="overline">LIVE QUOTE / OKX DEX</p><h3>Check the route before demo execution.</h3><p>Quotes are read-only and use X Layer USDT as the input token.</p></div><button className="quote-button" disabled={quoting} onClick={() => void getQuote()}><RefreshCw className={quoting ? 'spinning' : ''} size={15}/>{quoting ? 'Getting live quote…' : 'Get live X Layer quote'}</button>{quote && <div className="quote-result"><b>{quote.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {quote.outputSymbol || selected.symbol}</b><span>{quote.routeCount} route(s) · Gas estimate: {quote.estimatedGasFee || 'unavailable'} base units</span></div>}{quoteError && <div className="quote-error"><AlertTriangle size={14}/>{quoteError}</div>}</div>}
   </section>
 }
 
