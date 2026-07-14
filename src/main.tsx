@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Activity, AlertTriangle, ArrowRight, BarChart3, Bell, Bolt, Bot, Check, ChevronRight, CircleDollarSign, Compass, Copy, ExternalLink, Layers3, LayoutDashboard, LockKeyhole, Menu, RefreshCw, Rocket, ShieldCheck, Sparkles, WalletCards, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, BarChart3, Bell, Bolt, Bot, Check, ChevronRight, CircleDollarSign, Compass, Copy, ExternalLink, Layers3, LayoutDashboard, LockKeyhole, Menu, RefreshCw, Rocket, Search, ShieldCheck, Sparkles, WalletCards, X } from 'lucide-react'
 import './styles.css'
 
 type View = 'radar' | 'desk' | 'launch' | 'activity'
-type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium' | 'High'; score: number; liquidity: string; catalyst: string; color: string; price?: number; tokenAddress?: string; onchain?: boolean }
+type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium' | 'High'; score: number; liquidity: string; catalyst: string; color: string; price?: number; tokenAddress?: string; onchain?: boolean; logoUrl?: string; rank?: number }
 type Ticker = { last: string; open24h: string; high24h: string; low24h: string; volCcy24h: string; ts: string }
 type QuoteResult = { inputAmountUsd: number; outputAmount: number; outputSymbol: string; estimatedGasFee: string | null; routeCount: number; feePercent?: string; feeAmountUsd?: number; quotedAt: string; message?: string }
 type TradeRecord = { id: string; kind: 'demo' | 'approval' | 'swap'; symbol: string; amount: number; createdAt: string; transactionHash?: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
@@ -99,7 +99,7 @@ function App() {
   const price = currentTicker ? Number(currentTicker.last) : selected.price ?? (selected.symbol === 'BTC' ? 68429 : selected.symbol === 'ETH' ? 3612 : 174.86)
   const change = currentTicker ? ((price - Number(currentTicker.open24h)) / Number(currentTicker.open24h)) * 100 : 0
   const units = Number(amount || 0) / price
-  const nav = [[ 'radar', Compass, 'Markets' ], [ 'desk', WalletCards, 'Trade' ], [ 'launch', Rocket, 'Launch' ], [ 'activity', Activity, 'Activity' ]] as const
+  const nav = [[ 'launch', Rocket, 'Launch' ], [ 'radar', Compass, 'Markets' ], [ 'desk', WalletCards, 'Trade' ], [ 'activity', Activity, 'Activity' ]] as const
 
   return <div className="alpha-app">
     <aside className={menu ? 'alpha-sidebar open' : 'alpha-sidebar'}>
@@ -122,11 +122,33 @@ function App() {
 }
 
 function Radar({ selected, select, signals, tickers, loading, scanning, scan, onConnect }: { selected: Signal; select: (signal: Signal) => void; signals: Signal[]; tickers: Record<string, Ticker>; loading: boolean; scanning: boolean; scan: () => void; onConnect: () => void }) {
+  const [query, setQuery] = useState('')
+  const [searching, setSearching] = useState(false)
+  const [searchResults, setSearchResults] = useState<Signal[]>([])
+  const [searchMessage, setSearchMessage] = useState('')
+  const searchTokens = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const value = query.trim()
+    if (value.length < 2) { setSearchMessage('Enter at least two characters, a token symbol, or a contract address.'); return }
+    setSearching(true); setSearchMessage(''); setSearchResults([])
+    try {
+      const response = await fetch(`/api/xlayer-token-search?query=${encodeURIComponent(value)}`)
+      const data = await response.json() as { results?: Signal[]; message?: string }
+      if (!response.ok) throw new Error(data.message || 'Token search is unavailable')
+      const results = data.results || []
+      setSearchResults(results)
+      setSearchMessage(results.length ? `${results.length} X Layer token${results.length === 1 ? '' : 's'} found.` : 'No X Layer tokens matched that search.')
+    } catch (error) { setSearchMessage(error instanceof Error ? error.message : 'Token search is unavailable') }
+    finally { setSearching(false) }
+  }
   return <section className="alpha-content">
     <div className="radar-hero"><div><p className="overline">NEXUS / X LAYER DISCOVERY</p><h1>See what is moving<br/><em>before you ape.</em></h1><p>Explore the tokens gaining attention on X Layer, see what is driving the momentum, and decide whether the setup is worth your time.</p><div className="live-source"><span/> {loading ? 'Refreshing OKX public market data' : 'Live market data from OKX and X Layer'}</div></div><div className="radar-orb"><div><Compass size={31}/></div></div></div>
+    <div className="token-search"><div><p className="overline">TOKEN LOOKUP</p><b>Find any X Layer token</b><span>Search by name, ticker, or contract address.</span></div><form onSubmit={searchTokens}><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name, ticker, or 0x contract address" aria-label="Search X Layer tokens"/><button type="submit" disabled={searching}>{searching ? 'Searching...' : 'Search'}</button></form></div>
+    {searchMessage && <p className="search-message">{searchMessage}</p>}
+    {searchResults.length > 0 && <div className="search-results"><div className="section-title"><div><p className="overline">SEARCH RESULTS</p><h2>Pick a token to review.</h2></div><button onClick={() => { setSearchResults([]); setSearchMessage('') }}>Clear results</button></div><div className="signal-grid">{searchResults.map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress === signal.tokenAddress} onSelect={() => select(signal)} />)}</div></div>}
     <div className="connector"><div className="connector-icon"><Layers3 size={20}/></div><div><b>X Layer smart-money signal feed</b><p>Authenticated OKX Signal API scans recent buy-direction flows on X Layer (chain 196).</p></div><span className="online"><span/> Connected</span><button disabled={scanning} onClick={scan}>{scanning ? 'Scanning…' : 'Scan X Layer'} <RefreshCw className={scanning ? 'spinning' : ''} size={14}/></button></div>
     <div className="section-title"><div><p className="overline">X LAYER DISCOVERY</p><h2>Trending tokens right now.</h2></div><span>Signals are research prompts—not investment advice.</span></div>
-    <div className="signal-grid">{signals.map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress ? selected.tokenAddress === signal.tokenAddress : selected.symbol === signal.symbol} onSelect={() => select(signal)} />)}</div>
+    <div className="signal-grid">{signals.slice(0, 10).map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress ? selected.tokenAddress === signal.tokenAddress : selected.symbol === signal.symbol} onSelect={() => select(signal)} />)}</div>
     <div className="radar-foot"><AlertTriangle size={17}/><span><b>Safety rule:</b> Nexus surfaces observable data and explains risk. It does not guarantee returns, recommend a trade, or execute without a user review.</span></div>
   </section>
 }
