@@ -13,6 +13,7 @@ type SafetyCheck = { checkedAt: string; explorerUrl: string; token: { address: s
 type WatchItem = { tokenAddress: string; symbol: string; name: string; color: string; baselinePrice: number; baselineLiquidity: string; addedAt: string }
 type TradeRecord = { id: string; kind: 'demo' | 'approval' | 'swap'; symbol: string; amount: number; createdAt: string; transactionHash?: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
 type LaunchPlan = { id: string; name: string; symbol: string; identity: string; community: string; signature: string; goal: string; style: string; supply: string; liquidity: number; creatorAllocation: number; readiness: number; createdAt: string }
+type AlphaBrief = { id: string; symbol: string; name: string; tokenAddress?: string; price: number; change: number; stance: TokenAnalysis['stance']; summary: string; catalysts: string[]; risks: string[]; nextStep: string; safetyStatus: string; savedAt: string }
 type Eip1193Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
 type WalletTransaction = { to: string; data: string; gas?: string; gasPrice?: string; maxPriorityFeePerGas?: string; value?: string }
 type SwapHandoff = { chainId: string; expiresNote: string; approval: WalletTransaction; swap: WalletTransaction; summary: { inputAmountUsd: number; outputSymbol: string; outputRaw: string; minReceiveRaw: string; routeCount: number; slippagePercent: string; feePercent: string; feeAmountUsd: number; feeRecipient: string }; message?: string }
@@ -214,6 +215,9 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
   const [safetyLoading, setSafetyLoading] = useState(false)
   const [safetyError, setSafetyError] = useState('')
   const [briefSaved, setBriefSaved] = useState(false)
+  const [savedBriefs, setSavedBriefs] = useState<AlphaBrief[]>(() => {
+    try { return JSON.parse(window.localStorage.getItem('nexus-alpha-briefs') || '[]') as AlphaBrief[] } catch { return [] }
+  })
   const estimatedFee = Math.max(Number(amount || 0) * 0.001, 0.1)
   useEffect(() => { setQuote(null); setQuoteError(''); setHandoff(null); setHandoffError(''); setApprovalHash(''); setApprovalReady(false); setSwapHash(''); setAnalysis(null); setAnalysisError(''); setAnalysisMode(null); setSafety(null); setSafetyError(''); setBriefSaved(false) }, [selected.tokenAddress, amount])
   const getQuote = async () => {
@@ -252,9 +256,11 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
   const saveAlphaBrief = () => {
     if (!analysis) return
     try {
-      const existing = JSON.parse(window.localStorage.getItem('nexus-alpha-briefs') || '[]') as unknown[]
+      const existing = JSON.parse(window.localStorage.getItem('nexus-alpha-briefs') || '[]') as AlphaBrief[]
       const brief = { id: crypto.randomUUID(), symbol: selected.symbol, name: selected.name, tokenAddress: selected.tokenAddress, price, change, stance: analysis.stance, summary: analysis.summary, catalysts: analysis.catalysts, risks: analysis.risks, nextStep: analysis.nextStep, safetyStatus: safety ? safety.flags.some(flag => flag.level === 'risk') ? 'Risk flags found' : 'Safety reviewed' : 'Safety check not run', savedAt: new Date().toISOString() }
-      window.localStorage.setItem('nexus-alpha-briefs', JSON.stringify([brief, ...existing].slice(0, 10)))
+      const nextBriefs = [brief, ...existing].slice(0, 10)
+      window.localStorage.setItem('nexus-alpha-briefs', JSON.stringify(nextBriefs))
+      setSavedBriefs(nextBriefs)
       setBriefSaved(true); notify(`${selected.symbol} alpha brief saved`)
     } catch { notify('This browser could not save the alpha brief') }
   }
@@ -304,6 +310,7 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
     {selected.onchain && <div className="quote-review"><div><p className="overline">LIVE QUOTE / OKX DEX</p><h3>Check the route before demo execution.</h3><p>Quotes are read-only and use X Layer USDT as the input token.</p></div><button className="quote-button" disabled={quoting} onClick={() => void getQuote()}><RefreshCw className={quoting ? 'spinning' : ''} size={15}/>{quoting ? 'Getting live quote…' : 'Get live X Layer quote'}</button>{quote && <div className="quote-result"><b>{quote.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {quote.outputSymbol || selected.symbol}</b><span>{quote.routeCount} route(s) · Gas estimate: {quote.estimatedGasFee || 'unavailable'} base units</span></div>}{quoteError && <div className="quote-error"><AlertTriangle size={14}/>{quoteError}</div>}</div>}
     {selected.onchain && <div className="wallet-handoff"><div><p className="overline">OPTIONAL LIVE HANDOFF</p><h3>Sign in your wallet, only after review.</h3><p>Preparing a handoff never sends a transaction. Approval and swap each require a separate wallet confirmation.</p></div>{!walletAddress ? <button className="wallet-button" onClick={() => void connectWallet()}><WalletCards size={15}/> Connect X Layer wallet</button> : <button className="wallet-button" disabled={preparing || !quote} onClick={() => void prepareHandoff()}><WalletCards size={15}/>{preparing ? 'Preparing transaction…' : 'Prepare wallet transaction'}</button>}{walletAddress && <span className="wallet-address">{shortAddress(walletAddress)} / X Layer</span>}{handoff && <div className="handoff-steps"><div><span>1</span><b>Approve exact {money(handoff.summary.inputAmountUsd)} USDT</b><small>Approval is a separate on-chain permission for this amount.</small><button disabled={submitting !== null || Boolean(approvalHash)} onClick={() => void submitTransaction('approval')}>{approvalHash ? 'Waiting for confirmation…' : submitting === 'approval' ? 'Awaiting wallet…' : 'Approve in wallet'}</button></div><div><span>2</span><b>Sign the X Layer swap</b><small>{handoff.summary.routeCount} route(s) · {handoff.summary.slippagePercent}% maximum slippage.</small><button disabled={submitting !== null || !approvalReady || Boolean(swapHash)} onClick={() => void submitTransaction('swap')}>{swapHash ? 'Swap submitted' : submitting === 'swap' ? 'Awaiting wallet…' : approvalReady ? 'Sign swap in wallet' : 'Await approval confirmation'}</button></div><p>{handoff.expiresNote}</p></div>}{handoffError && <div className="quote-error"><AlertTriangle size={14}/>{handoffError}</div>}</div>}
     {quote && Number(quote.feePercent || 0) > 0 && <div className="fee-disclosure"><CircleDollarSign size={16}/><span><b>Nexus service fee: {quote.feePercent}% ({money(quote.feeAmountUsd || 0)})</b><small>Included in the USDT input amount and shown before any wallet signature.</small></span></div>}
+    {savedBriefs.length > 0 && <section className="saved-briefs"><div className="section-title"><div><p className="overline">SAVED ALPHA BRIEFS</p><h2>Research worth returning to.</h2></div><span>Stored only in this browser.</span></div><div className="brief-list">{savedBriefs.map(brief => <article className="brief-card" key={brief.id}><span className={`stance ${brief.stance.toLowerCase()}`}>{brief.stance}</span><div><b>{brief.symbol} <small>{brief.name}</small></b><p>{brief.summary}</p><em>{brief.safetyStatus} · {new Date(brief.savedAt).toLocaleDateString()}</em></div></article>)}</div></section>}
   </section>
 }
 
