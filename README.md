@@ -2,6 +2,30 @@
 
 An AI-assisted research and demo-execution workflow for the OKX.AI Genesis Hackathon.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  U["User"] --> UI["Nexus Alpha Desk\nVite + React"]
+  UI -->|"Scan X Layer"| RADAR["/api/xlayer-radar"]
+  UI -->|"Get live quote"| QUOTE["/api/xlayer-quote"]
+  UI -->|"Prepare handoff"| SWAP["/api/xlayer-swap"]
+
+  RADAR -->|"signed server request"| SIGNAL["OKX Signal API\nX Layer / chain 196"]
+  QUOTE -->|"signed server request"| DEX["OKX DEX Quote API"]
+  SWAP -->|"signed server request"| ROUTER["OKX DEX Approval + Swap APIs"]
+
+  ENV["Vercel environment variables\nOKX credentials"] -. "server-side only" .-> RADAR
+  ENV -. "server-side only" .-> QUOTE
+  ENV -. "server-side only" .-> SWAP
+
+  ROUTER -->|"approval + swap calldata"| UI
+  UI -->|"separate user confirmations"| WALLET["User EVM wallet\nX Layer"]
+  WALLET -->|"signed transactions"| XLAYER["X Layer"]
+```
+
+The browser never receives OKX credentials or private keys. It only receives live research data, quote summaries, and—after the user connects a wallet—transaction data that must be separately confirmed in that wallet.
+
 ## Run locally
 
 ```powershell
