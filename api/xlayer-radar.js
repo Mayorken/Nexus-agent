@@ -27,7 +27,7 @@ export default async function handler(_request, response) {
 
   const timestamp = new Date().toISOString()
   const requestPath = '/api/v6/dex/market/signal/list'
-  const body = JSON.stringify([{ chainIndex: '196', limit: '12' }])
+  const body = JSON.stringify({ chainIndex: '196', limit: '12' })
   const signature = crypto.createHmac('sha256', secretKey).update(`${timestamp}POST${requestPath}${body}`).digest('base64')
 
   try {
