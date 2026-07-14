@@ -20,6 +20,8 @@ export default async function handler(request, response) {
   const apiKey = process.env.OKX_WEB3_API_KEY
   const secretKey = process.env.OKX_WEB3_SECRET_KEY
   const passphrase = process.env.OKX_WEB3_PASSPHRASE
+  const feeRecipient = process.env.NEXUS_FEE_RECIPIENT
+  const feePercent = process.env.NEXUS_SWAP_FEE_PERCENT
   if (!apiKey || !secretKey || !passphrase) return response.status(503).json({ message: 'X Layer connector is not configured' })
 
   const tokenAddress = String(request.query.tokenAddress || '').toLowerCase()
@@ -29,7 +31,7 @@ export default async function handler(request, response) {
 
   const amount = String(Math.round(amountUsd * 1_000_000))
   const credentials = { apiKey, secretKey, passphrase }
-  const swapParams = new URLSearchParams({ chainIndex: '196', amount, fromTokenAddress: X_LAYER_USDT, toTokenAddress: tokenAddress, swapMode: 'exactIn', slippagePercent: '0.5', userWalletAddress: walletAddress })
+  const swapParams = new URLSearchParams({ chainIndex: '196', amount, fromTokenAddress: X_LAYER_USDT, toTokenAddress: tokenAddress, swapMode: 'exactIn', slippagePercent: '0.5', userWalletAddress: walletAddress, ...(feeRecipient && feePercent ? { feePercent, fromTokenReferrerWalletAddress: feeRecipient } : {}) })
   const approvalParams = new URLSearchParams({ chainIndex: '196', tokenContractAddress: X_LAYER_USDT, approveAmount: amount })
 
   try {
@@ -45,7 +47,7 @@ export default async function handler(request, response) {
       expiresNote: 'Quotes and calldata can change with market conditions. Re-prepare before signing if you wait.',
       approval: { to: approval.dexContractAddress, data: approval.data, gas: approval.gasLimit, gasPrice: approval.gasPrice, value: '0x0' },
       swap: { to: transaction.to, data: transaction.data, gas: transaction.gas, gasPrice: transaction.gasPrice, maxPriorityFeePerGas: transaction.maxPriorityFeePerGas, value: transaction.value || '0x0' },
-      summary: { inputAmountUsd: amountUsd, outputSymbol: routerResult.toToken?.tokenSymbol || '', outputRaw: String(routerResult.toTokenAmount || ''), minReceiveRaw: String(transaction.minReceiveAmount || ''), routeCount: Array.isArray(routerResult.dexRouterList) ? routerResult.dexRouterList.length : 0, slippagePercent: transaction.slippagePercent || '0.5' }
+      summary: { inputAmountUsd: amountUsd, outputSymbol: routerResult.toToken?.tokenSymbol || '', outputRaw: String(routerResult.toTokenAmount || ''), minReceiveRaw: String(transaction.minReceiveAmount || ''), routeCount: Array.isArray(routerResult.dexRouterList) ? routerResult.dexRouterList.length : 0, slippagePercent: transaction.slippagePercent || '0.5', feePercent: feeRecipient && feePercent ? feePercent : '0', feeAmountUsd: feeRecipient && feePercent ? Number((amountUsd * Number(feePercent) / 100).toFixed(6)) : 0, feeRecipient: feeRecipient || '' }
     })
   } catch (error) {
     return response.status(502).json({ message: error instanceof Error ? error.message : 'Unable to prepare X Layer transaction' })

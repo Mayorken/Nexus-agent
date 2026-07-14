@@ -14,6 +14,8 @@ export default async function handler(request, response) {
   const apiKey = process.env.OKX_WEB3_API_KEY
   const secretKey = process.env.OKX_WEB3_SECRET_KEY
   const passphrase = process.env.OKX_WEB3_PASSPHRASE
+  const feeRecipient = process.env.NEXUS_FEE_RECIPIENT
+  const feePercent = process.env.NEXUS_SWAP_FEE_PERCENT
   if (!apiKey || !secretKey || !passphrase) return response.status(503).json({ message: 'X Layer connector is not configured' })
 
   const tokenAddress = String(request.query.tokenAddress || '').toLowerCase()
@@ -21,7 +23,7 @@ export default async function handler(request, response) {
   if (!/^0x[a-f0-9]{40}$/.test(tokenAddress) || !Number.isFinite(amountUsd) || amountUsd <= 0 || amountUsd > 10000) return response.status(400).json({ message: 'A valid X Layer token address and an amount between $0 and $10,000 are required' })
 
   const amount = String(Math.round(amountUsd * 1_000_000))
-  const params = new URLSearchParams({ chainIndex: '196', amount, fromTokenAddress: X_LAYER_USDT, toTokenAddress: tokenAddress, swapMode: 'exactIn' })
+  const params = new URLSearchParams({ chainIndex: '196', amount, fromTokenAddress: X_LAYER_USDT, toTokenAddress: tokenAddress, swapMode: 'exactIn', ...(feeRecipient && feePercent ? { feePercent, fromTokenReferrerWalletAddress: feeRecipient } : {}) })
   const requestPath = '/api/v6/dex/aggregator/quote'
   const timestamp = new Date().toISOString()
   const signature = crypto.createHmac('sha256', secretKey).update(`${timestamp}GET${requestPath}?${params}`).digest('base64')
@@ -44,6 +46,8 @@ export default async function handler(request, response) {
       priceImpactPercent: quote.priceImpactPercentage ?? quote.priceImpact ?? null,
       estimatedGasFee: quote.estimateGasFee ?? quote.gasFee ?? null,
       routeCount: Array.isArray(quote.dexRouterList) ? quote.dexRouterList.length : 0,
+      feePercent: feeRecipient && feePercent ? feePercent : '0',
+      feeAmountUsd: feeRecipient && feePercent ? Number((amountUsd * Number(feePercent) / 100).toFixed(6)) : 0,
       quotedAt: timestamp
     })
   } catch {
