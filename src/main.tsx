@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, ArrowRight, BarChart3, Bell, Bolt, Bot, Check,
 import './styles.css'
 
 type View = 'radar' | 'desk' | 'activity' | 'pricing'
-type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium'; score: number; liquidity: string; catalyst: string; color: string }
+type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium' | 'High'; score: number; liquidity: string; catalyst: string; color: string; price?: number; tokenAddress?: string; onchain?: boolean }
 type Ticker = { last: string; open24h: string; high24h: string; low24h: string; volCcy24h: string; ts: string }
 
 const signals: Signal[] = [
@@ -24,6 +24,8 @@ function App() {
   const [tradeStatus, setTradeStatus] = useState<'idle' | 'preview' | 'complete'>('idle')
   const [connectorOpen, setConnectorOpen] = useState(false)
   const [connectorState, setConnectorState] = useState<'idle' | 'checking' | 'ready' | 'missing'>('idle')
+  const [radarSignals, setRadarSignals] = useState<Signal[]>(signals)
+  const [scanning, setScanning] = useState(false)
   const [toast, setToast] = useState('')
   const [menu, setMenu] = useState(false)
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2400) }
@@ -41,6 +43,18 @@ function App() {
     finally { setLoading(false) }
   }
   useEffect(() => { void refresh() }, [])
+  const scanXLayer = async () => {
+    setScanning(true)
+    try {
+      const response = await fetch('/api/xlayer-radar')
+      const data = await response.json() as { signals?: Signal[]; message?: string }
+      if (!response.ok || !data.signals?.length) throw new Error(data.message || 'No X Layer signals found')
+      setRadarSignals(data.signals)
+      setSelected(current => current.onchain ? current : data.signals![0])
+    } catch (error) { notify(error instanceof Error ? error.message : 'Unable to scan X Layer') }
+    finally { setScanning(false) }
+  }
+  useEffect(() => { void scanXLayer() }, [])
   const checkConnector = async () => {
     setConnectorState('checking')
     try {
@@ -50,8 +64,8 @@ function App() {
     } catch { setConnectorState('missing') }
   }
   const currentTicker = tickers[selected.symbol]
-  const price = currentTicker ? Number(currentTicker.last) : selected.symbol === 'BTC' ? 68429 : selected.symbol === 'ETH' ? 3612 : 174.86
-  const change = currentTicker ? ((price - Number(currentTicker.open24h)) / Number(currentTicker.open24h)) * 100 : 2.18
+  const price = currentTicker ? Number(currentTicker.last) : selected.price ?? (selected.symbol === 'BTC' ? 68429 : selected.symbol === 'ETH' ? 3612 : 174.86)
+  const change = currentTicker ? ((price - Number(currentTicker.open24h)) / Number(currentTicker.open24h)) * 100 : 0
   const units = Number(amount || 0) / price
   const nav = [[ 'radar', Compass, 'Alpha radar' ], [ 'desk', WalletCards, 'Trade desk' ], [ 'activity', Activity, 'Activity' ], [ 'pricing', CircleDollarSign, 'Pricing' ]] as const
 
@@ -65,7 +79,7 @@ function App() {
     </aside>
     <main className="alpha-main">
       <header><button className="menu-button" onClick={() => setMenu(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{view === 'radar' ? 'Alpha radar' : view === 'desk' ? 'Trade desk' : view === 'activity' ? 'Activity' : 'Pricing'}</b></div><div className="header-right"><span className="demo-badge"><ShieldCheck size={14}/> Demo mode</span><button className="refresh" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? 'spinning' : ''} size={15}/> Refresh</button></div></header>
-      {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} tickers={tickers} loading={loading} onConnect={() => setConnectorOpen(true)} />}
+      {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} signals={radarSignals} tickers={tickers} loading={loading} scanning={scanning} scan={() => void scanXLayer()} onConnect={() => setConnectorOpen(true)} />}
       {view === 'desk' && <Desk selected={selected} price={price} change={change} amount={amount} setAmount={setAmount} units={units} ticker={currentTicker} status={tradeStatus} setStatus={setTradeStatus} notify={notify} />}
       {view === 'activity' && <ActivityView status={tradeStatus} selected={selected} amount={amount} />}
       {view === 'pricing' && <Pricing notify={notify} />}
@@ -75,20 +89,20 @@ function App() {
   </div>
 }
 
-function Radar({ selected, select, tickers, loading, onConnect }: { selected: Signal; select: (signal: Signal) => void; tickers: Record<string, Ticker>; loading: boolean; onConnect: () => void }) {
+function Radar({ selected, select, signals, tickers, loading, scanning, scan, onConnect }: { selected: Signal; select: (signal: Signal) => void; signals: Signal[]; tickers: Record<string, Ticker>; loading: boolean; scanning: boolean; scan: () => void; onConnect: () => void }) {
   return <section className="alpha-content">
     <div className="radar-hero"><div><p className="overline">NEXUS ALPHA DESK / DISCOVER</p><h1>Find context before<br/><em>you find a trade.</em></h1><p>Rank liquid market opportunities with a transparent signal score, then build an execution plan you control.</p><div className="live-source"><span/> {loading ? 'Refreshing OKX public market data' : 'Market regime powered by live OKX public data'}</div></div><div className="radar-orb"><div><Compass size={31}/></div></div></div>
-    <div className="connector"><div className="connector-icon"><Layers3 size={20}/></div><div><b>X Layer on-chain connector</b><p>Connect a DEX data provider to activate X Layer token-pool discovery and liquidity screening.</p></div><span className="offline"><span/> Setup required</span><button onClick={onConnect}>Configure securely <ArrowRight size={14}/></button></div>
-    <div className="section-title"><div><p className="overline">MARKET REGIME WATCHLIST</p><h2>Signals worth investigating.</h2></div><span>Scores are research prompts—not investment advice.</span></div>
-    <div className="signal-grid">{signals.map(signal => <SignalCard key={signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.symbol === signal.symbol} onSelect={() => select(signal)} />)}</div>
+    <div className="connector"><div className="connector-icon"><Layers3 size={20}/></div><div><b>X Layer smart-money signal feed</b><p>Authenticated OKX Signal API scans recent buy-direction flows on X Layer (chain 196).</p></div><span className="online"><span/> Connected</span><button disabled={scanning} onClick={scan}>{scanning ? 'Scanning…' : 'Scan X Layer'} <RefreshCw className={scanning ? 'spinning' : ''} size={14}/></button></div>
+    <div className="section-title"><div><p className="overline">X LAYER SMART-MONEY SIGNALS</p><h2>Live flows worth investigating.</h2></div><span>Scores are research prompts—not investment advice.</span></div>
+    <div className="signal-grid">{signals.map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress ? selected.tokenAddress === signal.tokenAddress : selected.symbol === signal.symbol} onSelect={() => select(signal)} />)}</div>
     <div className="radar-foot"><AlertTriangle size={17}/><span><b>Safety rule:</b> Nexus surfaces observable data and explains risk. It does not guarantee returns, recommend a trade, or execute without a user review.</span></div>
   </section>
 }
 
 function SignalCard({ signal, ticker, selected, onSelect }: { signal: Signal; ticker?: Ticker; selected: boolean; onSelect: () => void }) {
-  const price = ticker ? Number(ticker.last) : signal.symbol === 'BTC' ? 68429 : signal.symbol === 'ETH' ? 3612 : 174.86
-  const change = ticker ? ((price - Number(ticker.open24h)) / Number(ticker.open24h)) * 100 : 2.18
-  return <article className={selected ? 'signal-card chosen' : 'signal-card'}><div className="signal-top"><span className="token-mark" style={{background: signal.color}}>{signal.symbol[0]}</span><span className="risk"><i className={signal.risk === 'Low' ? 'low' : ''}/>{signal.risk} risk</span></div><div className="signal-name"><h3>{signal.symbol}</h3><span>{signal.name}</span></div><div className="price-line"><b>{money(price)}</b><span className={change >= 0 ? 'positive' : 'negative'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</span></div><div className="score"><span>Signal strength</span><b>{signal.score}<small>/100</small></b><div><i style={{width: `${signal.score}%`}}/></div></div><div className="metrics"><span><small>Liquidity</small>{signal.liquidity}</span><span><small>Catalyst</small>{signal.catalyst}</span></div><p>{signal.thesis}</p><button onClick={onSelect}>Review trade plan <ArrowRight size={15}/></button></article>
+  const price = ticker ? Number(ticker.last) : signal.price ?? (signal.symbol === 'BTC' ? 68429 : signal.symbol === 'ETH' ? 3612 : 174.86)
+  const change = ticker ? ((price - Number(ticker.open24h)) / Number(ticker.open24h)) * 100 : 0
+  return <article className={selected ? 'signal-card chosen' : 'signal-card'}><div className="signal-top"><span className="token-mark" style={{background: signal.color}}>{signal.symbol[0]}</span><span className="risk"><i className={signal.risk === 'Low' ? 'low' : ''}/>{signal.risk} risk</span></div><div className="signal-name"><h3>{signal.symbol}</h3><span>{signal.name}</span></div><div className="price-line"><b>{money(price)}</b>{ticker ? <span className={change >= 0 ? 'positive' : 'negative'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</span> : <span className="positive">Live signal</span>}</div><div className="score"><span>Signal strength</span><b>{signal.score}<small>/100</small></b><div><i style={{width: `${signal.score}%`}}/></div></div><div className="metrics"><span><small>Liquidity</small>{signal.liquidity}</span><span><small>Catalyst</small>{signal.catalyst}</span></div><p>{signal.thesis}</p><button onClick={onSelect}>Review trade plan <ArrowRight size={15}/></button></article>
 }
 
 function Desk({ selected, price, change, amount, setAmount, units, ticker, status, setStatus, notify }: { selected: Signal; price: number; change: number; amount: string; setAmount: (value: string) => void; units: number; ticker?: Ticker; status: 'idle' | 'preview' | 'complete'; setStatus: (value: 'idle' | 'preview' | 'complete') => void; notify: (value: string) => void }) {
