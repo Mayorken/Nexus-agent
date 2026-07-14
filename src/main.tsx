@@ -7,7 +7,7 @@ type View = 'radar' | 'desk' | 'activity' | 'pricing'
 type Signal = { symbol: string; name: string; instId: string; thesis: string; risk: 'Low' | 'Medium' | 'High'; score: number; liquidity: string; catalyst: string; color: string; price?: number; tokenAddress?: string; onchain?: boolean }
 type Ticker = { last: string; open24h: string; high24h: string; low24h: string; volCcy24h: string; ts: string }
 type QuoteResult = { inputAmountUsd: number; outputAmount: number; outputSymbol: string; estimatedGasFee: string | null; routeCount: number; quotedAt: string; message?: string }
-type TradeRecord = { symbol: string; amount: number; createdAt: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
+type TradeRecord = { id: string; kind: 'demo' | 'approval' | 'swap'; symbol: string; amount: number; createdAt: string; transactionHash?: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
 type Eip1193Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
 type WalletTransaction = { to: string; data: string; gas?: string; gasPrice?: string; maxPriorityFeePerGas?: string; value?: string }
 type SwapHandoff = { chainId: string; expiresNote: string; approval: WalletTransaction; swap: WalletTransaction; summary: { inputAmountUsd: number; outputSymbol: string; outputRaw: string; minReceiveRaw: string; routeCount: number; slippagePercent: string }; message?: string }
@@ -31,7 +31,10 @@ function App() {
   const [tickers, setTickers] = useState<Record<string, Ticker>>({})
   const [loading, setLoading] = useState(true)
   const [tradeStatus, setTradeStatus] = useState<'idle' | 'preview' | 'complete'>('idle')
-  const [tradeRecord, setTradeRecord] = useState<TradeRecord | null>(null)
+  const [activityRecords, setActivityRecords] = useState<TradeRecord[]>(() => {
+    try { return JSON.parse(window.localStorage.getItem('nexus-alpha-activity') || '[]') as TradeRecord[] }
+    catch { return [] }
+  })
   const [walletAddress, setWalletAddress] = useState('')
   const [walletBusy, setWalletBusy] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
@@ -41,6 +44,8 @@ function App() {
   const [toast, setToast] = useState('')
   const [menu, setMenu] = useState(false)
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2400) }
+  const recordActivity = (record: TradeRecord) => setActivityRecords(current => [record, ...current].slice(0, 25))
+  useEffect(() => { window.localStorage.setItem('nexus-alpha-activity', JSON.stringify(activityRecords)) }, [activityRecords])
   const connectWallet = async () => {
     if (!window.ethereum) { notify('Install or open an EVM wallet such as OKX Wallet to continue'); return }
     setWalletBusy(true)
@@ -107,8 +112,8 @@ function App() {
     <main className="alpha-main">
       <header><button className="menu-button" onClick={() => setMenu(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{view === 'radar' ? 'Alpha radar' : view === 'desk' ? 'Trade desk' : view === 'activity' ? 'Activity' : 'Pricing'}</b></div><div className="header-right"><span className="demo-badge"><ShieldCheck size={14}/> Demo mode</span><button className="refresh" disabled={walletBusy} onClick={() => void connectWallet()}><WalletCards size={15}/>{walletBusy ? 'Connecting…' : walletAddress ? shortAddress(walletAddress) : 'Connect wallet'}</button><button className="refresh" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? 'spinning' : ''} size={15}/> Refresh</button></div></header>
       {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} signals={radarSignals} tickers={tickers} loading={loading} scanning={scanning} scan={() => void scanXLayer()} onConnect={() => setConnectorOpen(true)} />}
-      {view === 'desk' && <Desk selected={selected} price={price} change={change} amount={amount} setAmount={setAmount} units={units} ticker={currentTicker} status={tradeStatus} setStatus={setTradeStatus} notify={notify} onRecord={setTradeRecord} walletAddress={walletAddress} connectWallet={connectWallet} />}
-      {view === 'activity' && <ActivityView record={tradeRecord} />}
+      {view === 'desk' && <Desk selected={selected} price={price} change={change} amount={amount} setAmount={setAmount} units={units} ticker={currentTicker} status={tradeStatus} setStatus={setTradeStatus} notify={notify} onRecord={recordActivity} walletAddress={walletAddress} connectWallet={connectWallet} />}
+      {view === 'activity' && <ActivityView records={activityRecords} />}
       {view === 'pricing' && <Pricing notify={notify} />}
     </main>
     {connectorOpen && <ConnectorSetup state={connectorState} close={() => setConnectorOpen(false)} check={() => void checkConnector()} />}
@@ -159,7 +164,7 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
   }
   const simulate = () => {
     if (selected.onchain && !quote) { notify('Review a live quote before simulating this trade'); return }
-    onRecord({ symbol: selected.symbol, amount: Number(amount || 0), createdAt: new Date().toISOString(), quote: quote ? { outputAmount: quote.outputAmount, outputSymbol: quote.outputSymbol, estimatedGasFee: quote.estimatedGasFee, routeCount: quote.routeCount } : undefined })
+    onRecord({ id: crypto.randomUUID(), kind: 'demo', symbol: selected.symbol, amount: Number(amount || 0), createdAt: new Date().toISOString(), quote: quote ? { outputAmount: quote.outputAmount, outputSymbol: quote.outputSymbol, estimatedGasFee: quote.estimatedGasFee, routeCount: quote.routeCount } : undefined })
     setStatus('complete'); notify('Demo order completed — no funds were moved')
   }
   const prepareHandoff = async () => {
@@ -192,8 +197,8 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
       const transaction = kind === 'approval' ? handoff.approval : handoff.swap
       const params = { from: walletAddress, to: transaction.to, data: transaction.data, value: transaction.value || '0x0', ...(transaction.gas ? { gas: `0x${BigInt(transaction.gas).toString(16)}` } : {}), ...(transaction.gasPrice ? { gasPrice: `0x${BigInt(transaction.gasPrice).toString(16)}` } : transaction.maxPriorityFeePerGas ? { maxPriorityFeePerGas: `0x${BigInt(transaction.maxPriorityFeePerGas).toString(16)}` } : {}) }
       const hash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [params] }) as string
-      if (kind === 'approval') { setApprovalHash(hash); notify('Approval submitted. Waiting for X Layer confirmation.'); void waitForApproval(hash) }
-      else { setSwapHash(hash); notify('Swap submitted to X Layer. Track it in your wallet or explorer.') }
+      if (kind === 'approval') { setApprovalHash(hash); onRecord({ id: crypto.randomUUID(), kind: 'approval', symbol: selected.symbol, amount: Number(amount || 0), createdAt: new Date().toISOString(), transactionHash: hash }); notify('Approval submitted. Waiting for X Layer confirmation.'); void waitForApproval(hash) }
+      else { setSwapHash(hash); onRecord({ id: crypto.randomUUID(), kind: 'swap', symbol: selected.symbol, amount: Number(amount || 0), createdAt: new Date().toISOString(), transactionHash: hash, quote: quote ? { outputAmount: quote.outputAmount, outputSymbol: quote.outputSymbol, estimatedGasFee: quote.estimatedGasFee, routeCount: quote.routeCount } : undefined }); notify('Swap submitted to X Layer. Track it in your wallet or explorer.') }
     } catch (error) { setHandoffError(error instanceof Error ? error.message : 'Wallet signature was cancelled') }
     finally { setSubmitting(null) }
   }
@@ -205,7 +210,13 @@ function Desk({ selected, price, change, amount, setAmount, units, ticker, statu
   </section>
 }
 
-function ActivityView({ record }: { record: TradeRecord | null }) { return <section className="alpha-content"><div className="page-heading"><p className="overline">AUDIT TRAIL</p><h1>Every decision is visible.</h1><p>Human-readable records make agent-assisted execution easier to review.</p></div><div className="activity-card">{record ? <><div className="activity-icon"><Check size={18}/></div><div><span className="overline">{new Date(record.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} / DEMO</span><h3>Demo buy order recorded</h3><p>Simulated allocation of {money(record.amount)} to {record.symbol}. No funds moved and no wallet was connected.</p>{record.quote && <div className="audit-quote"><span>Live quote reviewed</span><b>{record.quote.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {record.quote.outputSymbol} · {record.quote.routeCount} route(s)</b></div>}</div><span className="activity-status">Complete</span></> : <><div className="activity-icon neutral"><Activity size={18}/></div><div><span className="overline">NO EXECUTIONS YET</span><h3>Your demo trade history will appear here.</h3><p>Open Alpha Radar, select a candidate, review a live quote, and confirm a demo trade to test the controlled-execution flow.</p></div></>}</div></section> }
+function ActivityView({ records }: { records: TradeRecord[] }) {
+  const detail = (record: TradeRecord) => record.kind === 'demo'
+    ? `Simulated allocation of ${money(record.amount)} to ${record.symbol}. No funds moved.`
+    : `${record.kind === 'approval' ? 'Exact USDT approval' : 'Swap'} handoff submitted for ${money(record.amount)} of ${record.symbol}.`
+  const title = (record: TradeRecord) => record.kind === 'demo' ? 'Demo buy order recorded' : record.kind === 'approval' ? 'Wallet approval submitted' : 'X Layer swap submitted'
+  return <section className="alpha-content"><div className="page-heading"><p className="overline">AUDIT TRAIL</p><h1>Every decision is visible.</h1><p>Records are saved in this browser so the operator can return to a transparent decision history.</p></div>{records.length ? <div className="activity-list">{records.map(record => <article className="activity-card" key={record.id}><div className={record.kind === 'demo' ? 'activity-icon' : 'activity-icon live'}>{record.kind === 'demo' ? <Check size={18}/> : <WalletCards size={18}/>}</div><div><span className="overline">{new Date(record.createdAt).toLocaleString()} / {record.kind.toUpperCase()}</span><h3>{title(record)}</h3><p>{detail(record)}</p>{record.quote && <div className="audit-quote"><span>Live quote reviewed</span><b>{record.quote.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {record.quote.outputSymbol} · {record.quote.routeCount} route(s)</b></div>}{record.transactionHash && <a className="tx-link" href={`https://www.okx.com/web3/explorer/xlayer/tx/${record.transactionHash}`} target="_blank" rel="noreferrer">View submitted transaction {shortAddress(record.transactionHash)} <ExternalLink size={12}/></a>}</div><span className="activity-status">{record.kind === 'demo' ? 'Demo' : 'Submitted'}</span></article>)}</div> : <div className="activity-card"><div className="activity-icon neutral"><Activity size={18}/></div><div><span className="overline">NO EXECUTIONS YET</span><h3>Your decision history will appear here.</h3><p>Open Alpha Radar, select a candidate, review a live quote, then record a demo trade or prepare a wallet handoff.</p></div></div>}</section>
+}
 
 function Pricing({ notify }: { notify: (value: string) => void }) { return <section className="alpha-content"><div className="page-heading"><p className="overline">MONETIZATION</p><h1>A service users can pay for.</h1><p>Simple plans turn research, risk review, and controlled execution into a measurable product.</p></div><div className="pricing-grid"><article><span className="overline">EXPLORER</span><h2>Free</h2><p>For users validating the signal quality.</p><ul><li>5 daily market scans</li><li>Trade-plan previews</li><li>Demo execution</li></ul><button onClick={() => notify('Explorer is your current plan')}>Current plan</button></article><article className="pro"><span className="overline">ALPHA PRO</span><h2>$19 <small>/ month</small></h2><p>For active operators who need a recurring research workflow.</p><ul><li>Unlimited scans</li><li>Signal alerts</li><li>Saved audit trail</li><li>Priority X Layer connector</li></ul><button onClick={() => notify('Checkout is the next integration')}>Start Pro <ArrowRight size={15}/></button></article><article><span className="overline">TEAM DESK</span><h2>Custom</h2><p>For communities and research teams.</p><ul><li>Shared workspaces</li><li>Custom risk policies</li><li>Workflow exports</li></ul><button onClick={() => notify('Team plan inquiry saved')}>Talk to us</button></article></div></section> }
 
