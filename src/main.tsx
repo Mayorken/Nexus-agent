@@ -10,6 +10,7 @@ type QuoteResult = { inputAmountUsd: number; outputAmount: number; outputSymbol:
 type TokenAnalysis = { stance: 'WATCH' | 'INVESTIGATE' | 'AVOID'; summary: string; catalysts: string[]; risks: string[]; nextStep: string }
 type SafetyFlag = { level: 'pass' | 'warn' | 'risk'; label: string; detail: string }
 type SafetyCheck = { checkedAt: string; explorerUrl: string; token: { address: string; name: string; symbol: string; decimals: number; communityRecognized: boolean }; market: { price: number; change24h: number; liquidity: number; volume24h: number; holders: number; marketCap: number; transactions24h: number }; concentration: { top10Percent: number | null; top20Percent: number | null; visibleHolderCount: number }; flags: SafetyFlag[] }
+type WatchItem = { tokenAddress: string; symbol: string; name: string; color: string; baselinePrice: number; baselineLiquidity: string; addedAt: string }
 type TradeRecord = { id: string; kind: 'demo' | 'approval' | 'swap'; symbol: string; amount: number; createdAt: string; transactionHash?: string; quote?: Pick<QuoteResult, 'outputAmount' | 'outputSymbol' | 'estimatedGasFee' | 'routeCount'> }
 type Eip1193Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
 type WalletTransaction = { to: string; data: string; gas?: string; gasPrice?: string; maxPriorityFeePerGas?: string; value?: string }
@@ -38,6 +39,11 @@ function App() {
     try { return JSON.parse(window.localStorage.getItem('nexus-alpha-activity') || '[]') as TradeRecord[] }
     catch { return [] }
   })
+  const [watchlist, setWatchlist] = useState<WatchItem[]>(() => {
+    try { return JSON.parse(window.localStorage.getItem('nexus-alpha-watchlist') || '[]') as WatchItem[] }
+    catch { return [] }
+  })
+  const [browserAlerts, setBrowserAlerts] = useState(() => typeof Notification !== 'undefined' && Notification.permission === 'granted')
   const [walletAddress, setWalletAddress] = useState('')
   const [walletBusy, setWalletBusy] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
@@ -49,6 +55,21 @@ function App() {
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2400) }
   const recordActivity = (record: TradeRecord) => setActivityRecords(current => [record, ...current].slice(0, 25))
   useEffect(() => { window.localStorage.setItem('nexus-alpha-activity', JSON.stringify(activityRecords)) }, [activityRecords])
+  useEffect(() => { window.localStorage.setItem('nexus-alpha-watchlist', JSON.stringify(watchlist)) }, [watchlist])
+  const toggleWatch = (signal: Signal) => {
+    if (!signal.tokenAddress) { notify('Only X Layer tokens can be added to the watchlist'); return }
+    const watched = watchlist.some(item => item.tokenAddress === signal.tokenAddress)
+    if (watched) { setWatchlist(current => current.filter(item => item.tokenAddress !== signal.tokenAddress)); notify(`${signal.symbol} removed from watchlist`); return }
+    if (watchlist.length >= 8) { notify('Your free watchlist is full. Remove a token to add another.'); return }
+    setWatchlist(current => [...current, { tokenAddress: signal.tokenAddress!, symbol: signal.symbol, name: signal.name, color: signal.color, baselinePrice: signal.price || 0, baselineLiquidity: signal.liquidity, addedAt: new Date().toISOString() }])
+    notify(`${signal.symbol} added to watchlist`)
+  }
+  const enableBrowserAlerts = async () => {
+    if (typeof Notification === 'undefined') { notify('Browser alerts are not supported here'); return }
+    const permission = await Notification.requestPermission()
+    setBrowserAlerts(permission === 'granted')
+    notify(permission === 'granted' ? 'Browser alerts enabled for Nexus watchlist changes' : 'Browser alerts were not enabled')
+  }
   const connectWallet = async () => {
     if (!window.ethereum) { notify('Install or open an EVM wallet such as OKX Wallet to continue'); return }
     setWalletBusy(true)
@@ -85,6 +106,15 @@ function App() {
       const data = await response.json() as { signals?: Signal[]; message?: string }
       if (!response.ok || !data.signals?.length) throw new Error(data.message || 'No X Layer signals found')
       setRadarSignals(data.signals)
+      let movementAlert = ''
+      setWatchlist(current => current.map(item => {
+        const latest = data.signals!.find(signal => signal.tokenAddress === item.tokenAddress)
+        if (!latest?.price || !item.baselinePrice) return item
+        const move = ((latest.price - item.baselinePrice) / item.baselinePrice) * 100
+        if (!movementAlert && Math.abs(move) >= 5) movementAlert = `${latest.symbol} is ${move >= 0 ? '+' : ''}${move.toFixed(1)}% since your last scan`
+        return { ...item, baselinePrice: latest.price, baselineLiquidity: latest.liquidity }
+      }))
+      if (movementAlert) { notify(`Watch alert: ${movementAlert}`); if (browserAlerts) new Notification('Nexus watch alert', { body: movementAlert }) }
       setSelected(current => current.onchain ? current : data.signals![0])
     } catch (error) { notify(error instanceof Error ? error.message : 'Unable to scan X Layer') }
     finally { setScanning(false) }
@@ -114,7 +144,7 @@ function App() {
     </aside>
     <main className="alpha-main">
       <header><button className="menu-button" onClick={() => setMenu(true)}><Menu size={20}/></button><div className="crumb"><span>Workspace</span><ChevronRight size={14}/><b>{view === 'radar' ? 'Alpha radar' : view === 'desk' ? 'Trade desk' : view === 'launch' ? 'Launch lab' : view === 'activity' ? 'Activity' : 'Pricing'}</b></div><div className="header-right"><span className="demo-badge"><ShieldCheck size={14}/> Demo mode</span><button className="refresh" disabled={walletBusy} onClick={() => void connectWallet()}><WalletCards size={15}/>{walletBusy ? 'Connecting…' : walletAddress ? shortAddress(walletAddress) : 'Connect wallet'}</button><button className="refresh" disabled={loading} onClick={() => void refresh()}><RefreshCw className={loading ? 'spinning' : ''} size={15}/> Refresh</button></div></header>
-      {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} signals={radarSignals} tickers={tickers} loading={loading} scanning={scanning} scan={() => void scanXLayer()} onConnect={() => setConnectorOpen(true)} />}
+      {view === 'radar' && <Radar selected={selected} select={(signal) => { setSelected(signal); setView('desk'); setTradeStatus('preview') }} signals={radarSignals} tickers={tickers} loading={loading} scanning={scanning} scan={() => void scanXLayer()} onConnect={() => setConnectorOpen(true)} watchlist={watchlist} toggleWatch={toggleWatch} browserAlerts={browserAlerts} enableBrowserAlerts={() => void enableBrowserAlerts()} />}
       {view === 'desk' && <Desk selected={selected} price={price} change={change} amount={amount} setAmount={setAmount} units={units} ticker={currentTicker} status={tradeStatus} setStatus={setTradeStatus} notify={notify} onRecord={recordActivity} walletAddress={walletAddress} connectWallet={connectWallet} />}
       {view === 'launch' && <LaunchLab notify={notify} />}
       {view === 'activity' && <ActivityView records={activityRecords} />}
@@ -124,7 +154,7 @@ function App() {
   </div>
 }
 
-function Radar({ selected, select, signals, tickers, loading, scanning, scan, onConnect }: { selected: Signal; select: (signal: Signal) => void; signals: Signal[]; tickers: Record<string, Ticker>; loading: boolean; scanning: boolean; scan: () => void; onConnect: () => void }) {
+function Radar({ selected, select, signals, tickers, loading, scanning, scan, onConnect, watchlist, toggleWatch, browserAlerts, enableBrowserAlerts }: { selected: Signal; select: (signal: Signal) => void; signals: Signal[]; tickers: Record<string, Ticker>; loading: boolean; scanning: boolean; scan: () => void; onConnect: () => void; watchlist: WatchItem[]; toggleWatch: (signal: Signal) => void; browserAlerts: boolean; enableBrowserAlerts: () => void }) {
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<Signal[]>([])
@@ -146,20 +176,21 @@ function Radar({ selected, select, signals, tickers, loading, scanning, scan, on
   }
   return <section className="alpha-content">
     <div className="radar-hero"><div><p className="overline">NEXUS / X LAYER DISCOVERY</p><h1>See what is moving<br/><em>before you ape.</em></h1><p>Explore the tokens gaining attention on X Layer, see what is driving the momentum, and decide whether the setup is worth your time.</p><div className="live-source"><span/> {loading ? 'Refreshing OKX public market data' : 'Live market data from OKX and X Layer'}</div></div><div className="radar-orb"><div><Compass size={31}/></div></div></div>
+    {watchlist.length > 0 && <section className="watchlist-panel"><div className="watchlist-heading"><div><p className="overline">YOUR WATCHLIST</p><b>{watchlist.length} saved X Layer token{watchlist.length === 1 ? '' : 's'}</b><span>Movement is measured since your last X Layer scan.</span></div><div><span className={browserAlerts ? 'alert-state on' : 'alert-state'}><Bell size={13}/>{browserAlerts ? 'Alerts on' : 'Alerts off'}</span>{!browserAlerts && <button onClick={enableBrowserAlerts}>Enable browser alerts</button>}</div></div><div className="watchlist-grid">{watchlist.map(item => { const latest = signals.find(signal => signal.tokenAddress === item.tokenAddress); const move = latest?.price && item.baselinePrice ? ((latest.price - item.baselinePrice) / item.baselinePrice) * 100 : null; return <button className="watch-item" key={item.tokenAddress} onClick={() => latest && select(latest)}><span className="token-mark" style={{background: item.color}}>{item.symbol[0]}</span><span><b>{item.symbol}</b><small>{latest ? money(latest.price || 0) : 'Awaiting scan'}</small></span><em className={move !== null && move < 0 ? 'negative' : 'positive'}>{move === null ? 'NEW' : `${move >= 0 ? '+' : ''}${move.toFixed(2)}%`}</em><ChevronRight size={15}/></button> })}</div></section>}
     <div className="token-search"><div><p className="overline">TOKEN LOOKUP</p><b>Find any X Layer token</b><span>Search by name, ticker, or contract address.</span></div><form onSubmit={searchTokens}><Search size={17}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search name, ticker, or 0x contract address" aria-label="Search X Layer tokens"/><button type="submit" disabled={searching}>{searching ? 'Searching...' : 'Search'}</button></form></div>
     {searchMessage && <p className="search-message">{searchMessage}</p>}
-    {searchResults.length > 0 && <div className="search-results"><div className="section-title"><div><p className="overline">SEARCH RESULTS</p><h2>Pick a token to review.</h2></div><button onClick={() => { setSearchResults([]); setSearchMessage('') }}>Clear results</button></div><div className="signal-grid">{searchResults.map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress === signal.tokenAddress} onSelect={() => select(signal)} />)}</div></div>}
+    {searchResults.length > 0 && <div className="search-results"><div className="section-title"><div><p className="overline">SEARCH RESULTS</p><h2>Pick a token to review.</h2></div><button onClick={() => { setSearchResults([]); setSearchMessage('') }}>Clear results</button></div><div className="signal-grid">{searchResults.map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress === signal.tokenAddress} onSelect={() => select(signal)} watched={watchlist.some(item => item.tokenAddress === signal.tokenAddress)} onToggleWatch={() => toggleWatch(signal)} />)}</div></div>}
     <div className="connector"><div className="connector-icon"><Layers3 size={20}/></div><div><b>X Layer smart-money signal feed</b><p>Authenticated OKX Signal API scans recent buy-direction flows on X Layer (chain 196).</p></div><span className="online"><span/> Connected</span><button disabled={scanning} onClick={scan}>{scanning ? 'Scanning…' : 'Scan X Layer'} <RefreshCw className={scanning ? 'spinning' : ''} size={14}/></button></div>
     <div className="section-title"><div><p className="overline">X LAYER DISCOVERY</p><h2>Trending tokens right now.</h2></div><span>Signals are research prompts—not investment advice.</span></div>
-    <div className="signal-grid">{signals.slice(0, 10).map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress ? selected.tokenAddress === signal.tokenAddress : selected.symbol === signal.symbol} onSelect={() => select(signal)} />)}</div>
+    <div className="signal-grid">{signals.slice(0, 10).map(signal => <SignalCard key={signal.tokenAddress || signal.symbol} signal={signal} ticker={tickers[signal.symbol]} selected={selected.tokenAddress ? selected.tokenAddress === signal.tokenAddress : selected.symbol === signal.symbol} onSelect={() => select(signal)} watched={watchlist.some(item => item.tokenAddress === signal.tokenAddress)} onToggleWatch={() => toggleWatch(signal)} />)}</div>
     <div className="radar-foot"><AlertTriangle size={17}/><span><b>Safety rule:</b> Nexus surfaces observable data and explains risk. It does not guarantee returns, recommend a trade, or execute without a user review.</span></div>
   </section>
 }
 
-function SignalCard({ signal, ticker, selected, onSelect }: { signal: Signal; ticker?: Ticker; selected: boolean; onSelect: () => void }) {
+function SignalCard({ signal, ticker, selected, onSelect, watched, onToggleWatch }: { signal: Signal; ticker?: Ticker; selected: boolean; onSelect: () => void; watched: boolean; onToggleWatch: () => void }) {
   const price = ticker ? Number(ticker.last) : signal.price ?? (signal.symbol === 'BTC' ? 68429 : signal.symbol === 'ETH' ? 3612 : 174.86)
   const change = ticker ? ((price - Number(ticker.open24h)) / Number(ticker.open24h)) * 100 : 0
-  return <article className={selected ? 'signal-card chosen' : 'signal-card'}><div className="signal-top"><span className="token-mark" style={{background: signal.color}}>{signal.symbol[0]}</span><span className="risk"><i className={signal.risk === 'Low' ? 'low' : ''}/>{signal.risk} risk</span></div><div className="signal-name"><h3>{signal.symbol}</h3><span>{signal.name}</span></div><div className="price-line"><b>{money(price)}</b>{ticker ? <span className={change >= 0 ? 'positive' : 'negative'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</span> : <span className="positive">Live signal</span>}</div><div className="score"><span>Signal strength</span><b>{signal.score}<small>/100</small></b><div><i style={{width: `${signal.score}%`}}/></div></div><div className="metrics"><span><small>{signal.onchain ? 'Signal flow' : 'Liquidity'}</small>{signal.liquidity}</span><span><small>Catalyst</small>{signal.catalyst}</span></div><p>{signal.thesis}</p><button onClick={onSelect}>Review trade plan <ArrowRight size={15}/></button></article>
+  return <article className={selected ? 'signal-card chosen' : 'signal-card'}><div className="signal-top"><span className="token-mark" style={{background: signal.color}}>{signal.symbol[0]}</span><span className="signal-actions"><span className="risk"><i className={signal.risk === 'Low' ? 'low' : ''}/>{signal.risk} risk</span>{signal.onchain && <button className={watched ? 'watch-toggle saved' : 'watch-toggle'} onClick={onToggleWatch} aria-label={watched ? `Remove ${signal.symbol} from watchlist` : `Add ${signal.symbol} to watchlist`}><Bell size={13}/>{watched ? 'Watching' : 'Watch'}</button>}</span></div><div className="signal-name"><h3>{signal.symbol}</h3><span>{signal.name}</span></div><div className="price-line"><b>{money(price)}</b>{ticker ? <span className={change >= 0 ? 'positive' : 'negative'}>{change >= 0 ? '+' : ''}{change.toFixed(2)}%</span> : <span className="positive">Live signal</span>}</div><div className="score"><span>Signal strength</span><b>{signal.score}<small>/100</small></b><div><i style={{width: `${signal.score}%`}}/></div></div><div className="metrics"><span><small>{signal.onchain ? 'Signal flow' : 'Liquidity'}</small>{signal.liquidity}</span><span><small>Catalyst</small>{signal.catalyst}</span></div><p>{signal.thesis}</p><button onClick={onSelect}>Review trade plan <ArrowRight size={15}/></button></article>
 }
 
 function Desk({ selected, price, change, amount, setAmount, units, ticker, status, setStatus, notify, onRecord, walletAddress, connectWallet }: { selected: Signal; price: number; change: number; amount: string; setAmount: (value: string) => void; units: number; ticker?: Ticker; status: 'idle' | 'preview' | 'complete'; setStatus: (value: 'idle' | 'preview' | 'complete') => void; notify: (value: string) => void; onRecord: (record: TradeRecord) => void; walletAddress: string; connectWallet: () => Promise<void> }) {
